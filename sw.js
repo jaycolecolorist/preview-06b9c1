@@ -16,12 +16,25 @@ async function keys() {
   });
   const k = await keysP; if (!k) keysP = null; return k;
 }
+// After the first visit the device keeps the files that do not change under the same name (code, fonts,
+// pictures, films; still encrypted), so the house opens quickly; pages and their data are always asked afresh.
+const CACHE = 'pv-1';
+const changing = (rel) => /\.(html|txt|json)$/.test(rel) || !rel.includes('.');
 async function blob(rel, k, fresh) {
   const name = hex(await crypto.subtle.sign('HMAC', k.mac, new TextEncoder().encode(rel))).slice(0, 32);
-  const r = await fetch(BASE + 'd/' + name + '.bin', fresh ? { cache: 'no-cache' } : {});
+  const url = BASE + 'd/' + name + '.bin';
+  const keep = !fresh && !changing(rel) ? await caches.open(CACHE).catch(() => null) : null;
+  const hit = keep ? await keep.match(url) : null;
+  const r = hit || (await fetch(url, keep ? {} : { cache: 'no-cache' }));
   if (!r.ok) return null;
+  if (keep && !hit) keep.put(url, r.clone()).catch(() => {});
   const b = new Uint8Array(await r.arrayBuffer());
-  return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.slice(0, 12) }, k.aes, b.slice(12));
+  try {
+    return await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.slice(0, 12) }, k.aes, b.slice(12));
+  } catch (e) {
+    if (hit) { await keep.delete(url); return blob(rel, k, true); } // kept under an older passphrase
+    throw e;
+  }
 }
 function respond(req, rel, buf) {
   const ext = rel.split('.').pop().toLowerCase();
