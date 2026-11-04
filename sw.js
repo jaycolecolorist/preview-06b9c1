@@ -30,7 +30,10 @@ async function blob(rel, k, fresh) {
   if (keep && !hit) keep.put(url, r.clone()).catch(() => {});
   const b = new Uint8Array(await r.arrayBuffer());
   try {
-    return await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.slice(0, 12) }, k.aes, b.slice(12));
+    const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.slice(0, 12) }, k.aes, b.slice(12)));
+    // Gzipped at lock time (code, styles, pages): unzip here; nothing else in the build starts with these two bytes.
+    if (plain[0] === 0x1f && plain[1] === 0x8b) return await new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+    return plain.buffer;
   } catch (e) {
     if (hit) { await keep.delete(url); return blob(rel, k, true); } // kept under an older passphrase
     throw e;
